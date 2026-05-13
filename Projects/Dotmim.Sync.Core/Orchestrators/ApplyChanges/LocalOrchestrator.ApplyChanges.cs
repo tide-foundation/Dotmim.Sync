@@ -87,6 +87,30 @@ namespace Dotmim.Sync
                         progress = runner.Progress;
                     }
 
+                    // Tide fork (atomic-errors-batch): if the provider supports
+                    // the per-row, in-DB errors-batch table, replace the
+                    // file-deserialised lastSyncErrorsBatchInfo with one we
+                    // materialise from the SQLite store. This is the
+                    // canonical source of truth post-fork — the
+                    // cScopeInfoClient.Errors blob is migrated to NULL when
+                    // the new table is provisioned, so the upstream
+                    // deserialise path above effectively becomes a no-op.
+                    //
+                    // The materialised on-disk files exist only for the
+                    // lifetime of this sync; the writer at the end of apply
+                    // overwrites the SQLite table directly, not these files.
+                    var atomicErrorsBatchInfo = await this.InternalMaterializeScopeErrorsBatchInfoAsync(
+                        cScopeInfo,
+                        cScopeInfoClient?.Name ?? context.ScopeName,
+                        context,
+                        connection,
+                        transaction,
+                        progress,
+                        cancellationToken).ConfigureAwait(false);
+
+                    if (atomicErrorsBatchInfo != null)
+                        lastSyncErrorsBatchInfo = atomicErrorsBatchInfo;
+
                     // Create the message containing everything needed to apply changes
                     var applyChanges = new MessageApplyChanges(cScopeInfoClient.Id, Guid.Empty, cScopeInfoClient.IsNewScope, cScopeInfoClient.LastSyncTimestamp,
                         cScopeInfo.Schema, policy, snapshotApplied, this.Options.BatchDirectory, serverBatchInfo, failedRows, clientChangesApplied);
@@ -159,9 +183,42 @@ namespace Dotmim.Sync
                     // now the sync is complete, remember the time
                     this.CompleteTime = DateTime.UtcNow;
 
-                    // Save all failed rows to disk
-                    if (failedRows.Tables.Any(st => st.HasRows))
+                    // Tide fork (atomic-errors-batch): persist failed rows in the
+                    // same DB transaction as the data apply. The errors-batch
+                    // table lives inside the client SQLite file (alongside
+                    // scope_info_client) so its INSERTs travel with the same
+                    // DbConnection / DbTransaction the apply is using. The
+                    // entire data+errors record either commits or rolls back —
+                    // closing the kill-mid-write window that previously dropped
+                    // rows silently (see InternalReplaceScopeErrorRowsAsync).
+                    //
+                    // We must run the wipe even when no new failures occurred
+                    // this sync, because the previous sync's failed rows might
+                    // still be sitting in the table and a sync with zero new
+                    // failures means they have all been resolved.
+                    //
+                    // If the provider doesn't support the new table (returns
+                    // -1) we fall back to the legacy on-disk BatchInfo path
+                    // below for byte-for-byte parity with upstream.
+                    var atomicWriteResult = await this.InternalReplaceScopeErrorRowsAsync(
+                        cScopeInfoClient?.Name ?? context.ScopeName,
+                        context,
+                        failedRows,
+                        connection,
+                        transaction,
+                        progress,
+                        cancellationToken).ConfigureAwait(false);
+
+                    if (atomicWriteResult >= 0)
                     {
+                        // Atomic path took the writes — clear in-memory copy
+                        // and leave errorsBatchInfo null so the new scope info
+                        // record below points at no on-disk file.
+                        failedRows.Clear();
+                    }
+                    else if (failedRows.Tables.Any(st => st.HasRows))
+                    {
+                        // Legacy file-based path (non-SQLite providers).
                         // Create a batch info for error rows
                         var info = connection != null && !string.IsNullOrEmpty(connection.Database) ? $"{connection.Database}_ERRORS" : "ERRORS";
                         errorsBatchInfo = new BatchInfo(this.Options.BatchDirectory, info: info);
