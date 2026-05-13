@@ -553,5 +553,240 @@ namespace Dotmim.Sync.Sqlite
 
             return command;
         }
+
+        // =================================================================
+        // Tide fork (atomic-errors-batch): per-row errors-batch table.
+        //
+        // The legacy upstream behaviour is to:
+        //   (a) apply incoming rows to the data tables in one transaction,
+        //   (b) write any failed rows to a JSON file under
+        //       Options.BatchDirectory via LocalJsonSerializer, OUTSIDE the
+        //       transaction,
+        //   (c) commit the transaction (advancing the watermark).
+        //
+        // If the process is killed between (a) and (b), or in the middle of
+        // (b), the watermark may advance with no record of the failed rows.
+        // We have observed this on a deployed ORK node — three users (UIDs
+        // 517-519) silently dropped, with master->ork tracking timestamps
+        // strictly less than the client's scope_last_server_sync_timestamp.
+        //
+        // The fix is to record failed rows in a SQLite table living in the
+        // SAME database file as the data tables, using the SAME DbConnection
+        // and DbTransaction. Apply + record-failure now commit atomically.
+        //
+        // Schema:
+        //   sync_scope_name      TEXT    NOT NULL   -- scope identity
+        //   table_name           TEXT    NOT NULL   -- failed row's table
+        //   table_schema         TEXT    NOT NULL DEFAULT ''  -- table's schema (often "")
+        //   row_state            INTEGER NOT NULL   -- SyncRowState enum value
+        //   primary_key_json     TEXT    NOT NULL   -- JSON-serialized PK tuple, identity
+        //   row_payload_json     TEXT    NOT NULL   -- JSON-serialized row values, "[v0, v1, ...]"
+        //   created_at_ticks     INTEGER NOT NULL   -- DateTime.UtcNow.Ticks at first insert
+        //   PRIMARY KEY (sync_scope_name, table_name, table_schema, primary_key_json)
+        //
+        // row_payload_json carries the full row as the SyncRow.ToArray()
+        // shape, encoded as a JSON array (the same shape LocalJsonSerializer
+        // writes per row). This lets the orchestrator's clean-errors path
+        // re-hydrate rows via the standard column-coercion logic.
+        //
+        // The expected workload is small (10s of rows per scope under
+        // normal operation, with a bounded retain window). A single scope
+        // index suffices.
+        // =================================================================
+
+        /// <summary>
+        /// Tide fork: errors-batch table name, sibling of scope_info_client.
+        /// </summary>
+        private string ScopeInfoClientErrorsTableName => $"{this.ScopeInfoTableNames.NormalizedName}_client_errors";
+
+        /// <inheritdoc />
+        public override DbCommand GetExistsScopeInfoClientErrorsTableCommand(DbConnection connection, DbTransaction transaction)
+        {
+            var commandText = $@"SELECT count(*) FROM sqlite_master WHERE type='table' AND name='{this.ScopeInfoClientErrorsTableName}'";
+            var command = connection.CreateCommand();
+            command.CommandText = commandText;
+            command.Connection = connection;
+            command.Transaction = transaction;
+            return command;
+        }
+
+        /// <inheritdoc />
+        public override DbCommand GetCreateScopeInfoClientErrorsTableCommand(DbConnection connection, DbTransaction transaction)
+        {
+            // The CREATE + the index are two statements; we issue both in
+            // one CommandText since SqliteCommand happily accepts a script.
+            var tableName = this.ScopeInfoClientErrorsTableName;
+            var commandText =
+                $@"CREATE TABLE [{tableName}](
+                    sync_scope_name    TEXT    NOT NULL,
+                    table_name         TEXT    NOT NULL,
+                    table_schema       TEXT    NOT NULL DEFAULT '',
+                    row_state          INTEGER NOT NULL,
+                    primary_key_json   TEXT    NOT NULL,
+                    row_payload_json   TEXT    NOT NULL,
+                    created_at_ticks   INTEGER NOT NULL,
+                    CONSTRAINT PKey_{tableName} PRIMARY KEY(sync_scope_name, table_name, table_schema, primary_key_json));
+                  CREATE INDEX [ix_{tableName}_scope] ON [{tableName}](sync_scope_name);";
+
+            var command = connection.CreateCommand();
+            command.Transaction = transaction;
+            command.CommandText = commandText;
+            return command;
+        }
+
+        /// <inheritdoc />
+        public override DbCommand GetDropScopeInfoClientErrorsTableCommand(DbConnection connection, DbTransaction transaction)
+        {
+            var commandText = $"DROP TABLE [{this.ScopeInfoClientErrorsTableName}]";
+            var command = connection.CreateCommand();
+            command.CommandText = commandText;
+            command.Connection = connection;
+            command.Transaction = transaction;
+            return command;
+        }
+
+        /// <inheritdoc />
+        public override DbCommand GetLoadScopeInfoClientErrorRowsCommand(DbConnection connection, DbTransaction transaction)
+        {
+            var tableName = this.ScopeInfoClientErrorsTableName;
+            var commandText =
+                $@"SELECT sync_scope_name, table_name, table_schema, row_state, primary_key_json, row_payload_json, created_at_ticks
+                   FROM [{tableName}]
+                   WHERE sync_scope_name = @sync_scope_name
+                   ORDER BY table_name, table_schema, primary_key_json";
+
+            var command = connection.CreateCommand();
+            command.Transaction = transaction;
+            command.CommandText = commandText;
+
+            var p = command.CreateParameter();
+            p.ParameterName = "@sync_scope_name";
+            p.DbType = DbType.String;
+            p.Size = 100;
+            command.Parameters.Add(p);
+
+            return command;
+        }
+
+        /// <inheritdoc />
+        public override DbCommand GetSaveScopeInfoClientErrorRowCommand(DbConnection connection, DbTransaction transaction)
+        {
+            var tableName = this.ScopeInfoClientErrorsTableName;
+
+            // INSERT OR REPLACE so we upsert by the composite PK. The
+            // created_at_ticks is supplied by the caller; on a replace we
+            // keep the new timestamp (good enough for cleanup heuristics).
+            var commandText =
+                $@"INSERT OR REPLACE INTO [{tableName}]
+                       (sync_scope_name, table_name, table_schema, row_state, primary_key_json, row_payload_json, created_at_ticks)
+                   VALUES
+                       (@sync_scope_name, @table_name, @table_schema, @row_state, @primary_key_json, @row_payload_json, @created_at_ticks)";
+
+            var command = new SqliteCommand(commandText, (SqliteConnection)connection, (SqliteTransaction)transaction);
+
+            var p = command.CreateParameter();
+            p.ParameterName = "@sync_scope_name";
+            p.DbType = DbType.String;
+            p.Size = 100;
+            command.Parameters.Add(p);
+
+            p = command.CreateParameter();
+            p.ParameterName = "@table_name";
+            p.DbType = DbType.String;
+            p.Size = 200;
+            command.Parameters.Add(p);
+
+            p = command.CreateParameter();
+            p.ParameterName = "@table_schema";
+            p.DbType = DbType.String;
+            p.Size = 200;
+            command.Parameters.Add(p);
+
+            p = command.CreateParameter();
+            p.ParameterName = "@row_state";
+            p.DbType = DbType.Int32;
+            command.Parameters.Add(p);
+
+            p = command.CreateParameter();
+            p.ParameterName = "@primary_key_json";
+            p.DbType = DbType.String;
+            p.Size = -1;
+            command.Parameters.Add(p);
+
+            p = command.CreateParameter();
+            p.ParameterName = "@row_payload_json";
+            p.DbType = DbType.String;
+            p.Size = -1;
+            command.Parameters.Add(p);
+
+            p = command.CreateParameter();
+            p.ParameterName = "@created_at_ticks";
+            p.DbType = DbType.Int64;
+            command.Parameters.Add(p);
+
+            return command;
+        }
+
+        /// <inheritdoc />
+        public override DbCommand GetDeleteScopeInfoClientErrorRowCommand(DbConnection connection, DbTransaction transaction)
+        {
+            var tableName = this.ScopeInfoClientErrorsTableName;
+            var commandText =
+                $@"DELETE FROM [{tableName}]
+                   WHERE sync_scope_name = @sync_scope_name
+                     AND table_name      = @table_name
+                     AND table_schema    = @table_schema
+                     AND primary_key_json = @primary_key_json";
+
+            var command = connection.CreateCommand();
+            command.Transaction = transaction;
+            command.CommandText = commandText;
+
+            var p = command.CreateParameter();
+            p.ParameterName = "@sync_scope_name";
+            p.DbType = DbType.String;
+            p.Size = 100;
+            command.Parameters.Add(p);
+
+            p = command.CreateParameter();
+            p.ParameterName = "@table_name";
+            p.DbType = DbType.String;
+            p.Size = 200;
+            command.Parameters.Add(p);
+
+            p = command.CreateParameter();
+            p.ParameterName = "@table_schema";
+            p.DbType = DbType.String;
+            p.Size = 200;
+            command.Parameters.Add(p);
+
+            p = command.CreateParameter();
+            p.ParameterName = "@primary_key_json";
+            p.DbType = DbType.String;
+            p.Size = -1;
+            command.Parameters.Add(p);
+
+            return command;
+        }
+
+        /// <inheritdoc />
+        public override DbCommand GetDeleteScopeInfoClientErrorRowsForScopeCommand(DbConnection connection, DbTransaction transaction)
+        {
+            var tableName = this.ScopeInfoClientErrorsTableName;
+            var commandText =
+                $@"DELETE FROM [{tableName}] WHERE sync_scope_name = @sync_scope_name";
+
+            var command = connection.CreateCommand();
+            command.Transaction = transaction;
+            command.CommandText = commandText;
+
+            var p = command.CreateParameter();
+            p.ParameterName = "@sync_scope_name";
+            p.DbType = DbType.String;
+            p.Size = 100;
+            command.Parameters.Add(p);
+
+            return command;
+        }
     }
 }

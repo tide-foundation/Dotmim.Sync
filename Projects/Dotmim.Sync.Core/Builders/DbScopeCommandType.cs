@@ -103,5 +103,51 @@ namespace Dotmim.Sync.Builders
         /// Get local timestamp command.
         /// </summary>
         GetLocalTimestamp,
+
+        // -----------------------------------------------------------------
+        // Tide fork (atomic-errors-batch): commands for the per-row, per-scope
+        // errors-batch table that replaces the file-based sync_scope_errors blob.
+        // Implemented by SqliteScopeBuilder; other providers may leave them
+        // unimplemented (the orchestrator's fallback path retains the legacy
+        // file-based behaviour for those providers).
+        // -----------------------------------------------------------------
+
+        /// <summary>
+        /// Tide fork: exists scope info client errors table command.
+        /// </summary>
+        ExistsScopeInfoClientErrorsTable,
+
+        /// <summary>
+        /// Tide fork: create scope info client errors table command.
+        /// </summary>
+        CreateScopeInfoClientErrorsTable,
+
+        /// <summary>
+        /// Tide fork: drop scope info client errors table command.
+        /// </summary>
+        DropScopeInfoClientErrorsTable,
+
+        /// <summary>
+        /// Tide fork: load all rows for a given scope (used to materialise the
+        /// in-memory failed-rows list at the start of a sync).
+        /// </summary>
+        LoadScopeInfoClientErrorRows,
+
+        /// <summary>
+        /// Tide fork: upsert (delete-by-PK then insert) a single failed row.
+        /// </summary>
+        SaveScopeInfoClientErrorRow,
+
+        /// <summary>
+        /// Tide fork: delete a single failed row by its (scope, table, schema, pk-json) identity.
+        /// Used by the clean-errors path after a successful retry.
+        /// </summary>
+        DeleteScopeInfoClientErrorRow,
+
+        /// <summary>
+        /// Tide fork: delete all rows for a given scope (used during the
+        /// clean-break migration to discard the legacy file-based errors batch).
+        /// </summary>
+        DeleteScopeInfoClientErrorRowsForScope,
     }
 }
