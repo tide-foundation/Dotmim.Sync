@@ -9,6 +9,7 @@ using System.Data;
 using System.Data.Common;
 using System.IO;
 using System.Linq;
+using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -822,7 +823,64 @@ namespace Dotmim.Sync
                     using (var localFailedRowsSerializerReader = new LocalJsonSerializer(this, context))
                     {
                         var syncRows = localFailedRowsSerializerReader.GetRowsFromFile(lastSyncErrorsBpiFullPath, schemaChangesTable);
-                        failedRows.AddRange(syncRows);
+
+                        // Tide fork (errors-batch-resilience): the errors batch file can be
+                        // left truncated / structurally invalid on disk if the previous sync
+                        // was killed mid-write (e.g. k8s SIGKILL during pod eviction). The
+                        // companion LocalJsonSerializer atomic-rename fix prevents new writes
+                        // from producing such files, but we still have to recover gracefully
+                        // from files left over by older builds — otherwise the sync_scope_errors
+                        // pointer keeps the bad file on the hot path forever and every sync
+                        // replays the same exception.
+                        //
+                        // On JSON-parse / row-iteration failures only: log a warning, treat
+                        // failedRows as empty for this file, and fall through to the rewrite
+                        // below. The rewrite either writes any newly-failing rows from the
+                        // current sync to a fresh file (via atomic rename) or, if zero rows
+                        // fail, the trailing File.Delete clears the file entirely.
+                        //
+                        // Do NOT swallow DB errors / OOM / cancellations / etc. — only the
+                        // narrow set of exceptions that indicate "the JSON on disk is bad".
+                        try
+                        {
+                            failedRows.AddRange(syncRows);
+                        }
+                        catch (JsonException jsonEx)
+                        {
+                            this.Logger.LogWarning(
+                                jsonEx,
+                                "[InternalApplyCleanErrorsAsync]. Corrupt errors batch file {Path} ({ExceptionType}: {Message}). Treating as empty and rewriting.",
+                                lastSyncErrorsBpiFullPath,
+                                jsonEx.GetType().Name,
+                                jsonEx.Message);
+                            failedRows.Clear();
+                        }
+                        catch (ArgumentOutOfRangeException aoorEx)
+                        {
+                            // Raised by GetRowsFromFile when the row's column count no longer
+                            // matches the schema header — typical signature of a row truncated
+                            // mid-write that re-parses as a shorter row.
+                            this.Logger.LogWarning(
+                                aoorEx,
+                                "[InternalApplyCleanErrorsAsync]. Corrupt errors batch file {Path} ({ExceptionType}: {Message}). Treating as empty and rewriting.",
+                                lastSyncErrorsBpiFullPath,
+                                aoorEx.GetType().Name,
+                                aoorEx.Message);
+                            failedRows.Clear();
+                        }
+                        catch (InvalidOperationException ioEx)
+                        {
+                            // JsonReader / Utf8JsonReader surface state-machine violations as
+                            // InvalidOperationException ("Cannot read value: token type is...").
+                            // Same class of disk-corruption symptom — treat the same way.
+                            this.Logger.LogWarning(
+                                ioEx,
+                                "[InternalApplyCleanErrorsAsync]. Corrupt errors batch file {Path} ({ExceptionType}: {Message}). Treating as empty and rewriting.",
+                                lastSyncErrorsBpiFullPath,
+                                ioEx.GetType().Name,
+                                ioEx.Message);
+                            failedRows.Clear();
+                        }
                     }
 
                     localSerializerReader = new LocalJsonSerializer(this, context);
