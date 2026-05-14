@@ -1,4 +1,5 @@
 ﻿using Dotmim.Sync.Enumerations;
+using Microsoft.Extensions.Logging;
 using System;
 using System.Data.Common;
 using System.Threading.Tasks;
@@ -30,10 +31,65 @@ namespace Dotmim.Sync
             this.Resolution = action;
             this.SenderScopeId = senderScopeId;
 
-            var finalRowArray = new object[conflictRow.ToArray().Length];
-            conflictRow.ToArray().CopyTo(finalRowArray, 0);
+            // Tide fork: SyncRow(SyncTable, object[]) requires the array
+            // length to be exactly schema.Columns.Count + 1 (slot 0 is the
+            // row state). If the incoming conflictRow buffer was built with
+            // a wider/narrower schema than schemaChangesTable (schema drift
+            // between client and server, errors-batch carrying a stale row,
+            // etc.) the original code threw ArgumentException("row array has
+            // too many items" / "row array must have one more item to store
+            // state") from the SyncRow ctor, which propagated as a crit out
+            // of the apply pipeline. Re-shape the buffer to the cloned
+            // schema instead, so the conflict event still fires and the
+            // sync survives. FinalRow is only consumed when the resolution
+            // is MergeRow; padding with null / truncating leaves the PK
+            // columns intact and any over-/undershoot is logged.
+            var clonedSchema = schemaChangesTable.Clone();
+            var sourceBuffer = conflictRow.ToArray();
+            var expectedLen = clonedSchema.Columns.Count + 1;
 
-            this.FinalRow = new SyncRow(schemaChangesTable.Clone(), finalRowArray);
+            object[] finalRowArray;
+            if (sourceBuffer.Length == expectedLen)
+            {
+                finalRowArray = new object[expectedLen];
+                sourceBuffer.CopyTo(finalRowArray, 0);
+            }
+            else
+            {
+                orchestrator?.Logger?.LogWarning(
+                    "[ApplyChangesConflictOccuredArgs] Reshaping conflict row for {Schema}.{Table}: source buffer has {SrcLen} values but cloned schema expects {ExpectedLen} (Columns.Count + 1). Likely schema drift between conflictRow and schemaChangesTable.",
+                    clonedSchema.SchemaName,
+                    clonedSchema.TableName,
+                    sourceBuffer.Length,
+                    expectedLen);
+
+                finalRowArray = new object[expectedLen];
+                var copyLen = Math.Min(sourceBuffer.Length, expectedLen);
+                Array.Copy(sourceBuffer, finalRowArray, copyLen);
+
+                // Ensure the row-state slot (index 0) is populated even if
+                // the source buffer was empty/short.
+                if (finalRowArray[0] == null)
+                    finalRowArray[0] = (int)conflictRow.RowState;
+            }
+
+            try
+            {
+                this.FinalRow = new SyncRow(clonedSchema, finalRowArray);
+            }
+            catch (ArgumentException ex)
+            {
+                // Should be impossible after the reshape above, but if a
+                // future change to SyncRow validation re-introduces a throw
+                // path we still don't want to take down the sync over a
+                // conflict-event side effect.
+                orchestrator?.Logger?.LogWarning(
+                    ex,
+                    "[ApplyChangesConflictOccuredArgs] Could not materialize FinalRow for {Schema}.{Table}; leaving FinalRow null. Conflict resolution will still proceed with the configured policy.",
+                    clonedSchema.SchemaName,
+                    clonedSchema.TableName);
+                this.FinalRow = null;
+            }
         }
 
         /// <summary>
