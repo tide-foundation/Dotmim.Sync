@@ -89,6 +89,31 @@ namespace Dotmim.Sync
                         if (sicCreated && !atLeastOneScopeInfoClientTableBeenCreated)
                             atLeastOneScopeInfoClientTableBeenCreated = true;
                     }
+
+                    // Tide fork (atomic-errors-batch): provision the per-row,
+                    // in-DB errors-batch table that replaces the on-disk
+                    // BatchInfo blob stored at scope_info_client.sync_scope_errors.
+                    // Providers that don't override the create command return
+                    // null from the factory and InternalCreateScopeInfoTableAsync
+                    // becomes a no-op — they continue using the legacy file
+                    // path. SQLite (the client store) opts in via
+                    // SqliteScopeBuilder.GetCreateScopeInfoClientErrorsTableCommand.
+                    bool errExists;
+                    (context, errExists) = await this.InternalExistsScopeInfoTableAsync(context, DbScopeType.ScopeInfoClientErrors, connection, transaction, progress, cancellationToken).ConfigureAwait(false);
+
+                    if (!errExists)
+                    {
+                        (context, _) = await this.InternalCreateScopeInfoTableAsync(context, DbScopeType.ScopeInfoClientErrors, connection, transaction, progress, cancellationToken).ConfigureAwait(false);
+
+                        // Tide fork: clean-break migration. After the new
+                        // table is created, NULL out every legacy
+                        // sync_scope_errors blob in scope_info_client so the
+                        // old file-pointer path is decommissioned. Orphan
+                        // JSON files under Options.BatchDirectory are left
+                        // alone (harmless; cleaned by container restart /
+                        // /tmp sweep).
+                        await this.InternalMigrateLegacyScopeErrorsAsync(context, connection, transaction, progress, cancellationToken).ConfigureAwait(false);
+                    }
                 }
 
                 // Sorting tables based on dependencies between them

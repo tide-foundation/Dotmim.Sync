@@ -161,6 +161,10 @@ namespace Dotmim.Sync
                 {
                     DbScopeType.ScopeInfo => DbScopeCommandType.ExistsScopeInfoTable,
                     DbScopeType.ScopeInfoClient => DbScopeCommandType.ExistsScopeInfoClientTable,
+
+                    // Tide fork (atomic-errors-batch): per-row errors-batch table.
+                    DbScopeType.ScopeInfoClientErrors => DbScopeCommandType.ExistsScopeInfoClientErrorsTable,
+
                     _ => throw new NotImplementedException(),
                 };
 
@@ -203,6 +207,10 @@ namespace Dotmim.Sync
                 {
                     DbScopeType.ScopeInfo => DbScopeCommandType.DropScopeInfoTable,
                     DbScopeType.ScopeInfoClient => DbScopeCommandType.DropScopeInfoClientTable,
+
+                    // Tide fork (atomic-errors-batch): per-row errors-batch table.
+                    DbScopeType.ScopeInfoClientErrors => DbScopeCommandType.DropScopeInfoClientErrorsTable,
+
                     _ => throw new NotImplementedException(),
                 };
 
@@ -255,6 +263,10 @@ namespace Dotmim.Sync
                 {
                     DbScopeType.ScopeInfo => DbScopeCommandType.CreateScopeInfoTable,
                     DbScopeType.ScopeInfoClient => DbScopeCommandType.CreateScopeInfoClientTable,
+
+                    // Tide fork (atomic-errors-batch): per-row errors-batch table.
+                    DbScopeType.ScopeInfoClientErrors => DbScopeCommandType.CreateScopeInfoClientErrorsTable,
+
                     _ => throw new NotImplementedException(),
                 };
 
