@@ -414,7 +414,7 @@
           "System.Runtime.CompilerServices.Unsafe": "4.5.3"
         }
       },
-      "dotmim.sync.core": {
+      "Tide.Dotmim.Sync.Core": {
         "type": "Project",
         "dependencies": {
           "Microsoft.Bcl.AsyncInterfaces": "[8.0.0, )",
@@ -586,7 +586,7 @@
         "resolved": "4.5.4",
         "contentHash": "zteT+G8xuGu6mS+mzDzYXbzS7rd3K6Fjb9RiZlYlJPam2/hU7JCBZBVEcywNuR+oZ1ncTvc/cq0faRr3P01OVg=="
       },
-      "dotmim.sync.core": {
+      "Tide.Dotmim.Sync.Core": {
         "type": "Project",
         "dependencies": {
           "Microsoft.Extensions.Logging": "[6.0.0, )",
@@ -708,7 +708,7 @@
           "System.Text.Encodings.Web": "8.0.0"
         }
       },
-      "dotmim.sync.core": {
+      "Tide.Dotmim.Sync.Core": {
         "type": "Project",
         "dependencies": {
           "Microsoft.Extensions.Logging": "[8.0.0, )",

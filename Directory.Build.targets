@@ -1,0 +1,22 @@
+<Project>
+
+	<!--
+		Tide fork packaging overrides.
+		Loaded AFTER each .csproj's own PropertyGroups, so these values take precedence
+		over per-project Authors/Company/RepositoryUrl etc. Per-project Description and
+		Title are intentionally preserved (each provider has its own meaningful blurb).
+	-->
+	<PropertyGroup>
+		<PackageId>Tide.$(MSBuildProjectName)</PackageId>
+		<Version>1.3.0-tide.1</Version>
+		<Authors>Tide Foundation</Authors>
+		<Company>Tide Foundation</Company>
+		<RepositoryUrl>https://github.com/tide-foundation/Dotmim.Sync</RepositoryUrl>
+		<RepositoryBranch>tide-fix/atomic-errors-batch</RepositoryBranch>
+		<PackageProjectUrl>https://github.com/tide-foundation/Dotmim.Sync</PackageProjectUrl>
+		<PackageTags>dotmim sync tide fork errors-batch</PackageTags>
+		<PackageLicenseExpression>MIT</PackageLicenseExpression>
+		<Copyright>Copyright © Tide Foundation. Based on Dotmim.Sync by Mimetis.</Copyright>
+	</PropertyGroup>
+
+</Project>

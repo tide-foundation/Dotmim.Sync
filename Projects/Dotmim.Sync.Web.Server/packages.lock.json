@@ -493,7 +493,7 @@
           "System.Runtime.CompilerServices.Unsafe": "4.5.3"
         }
       },
-      "dotmim.sync.core": {
+      "Tide.Dotmim.Sync.Core": {
         "type": "Project",
         "dependencies": {
           "Microsoft.Bcl.AsyncInterfaces": "[8.0.0, )",
@@ -504,13 +504,13 @@
           "System.Threading.Tasks.Dataflow": "[8.0.0, )"
         }
       },
-      "dotmim.sync.web.client": {
+      "Tide.Dotmim.Sync.Web.Client": {
         "type": "Project",
         "dependencies": {
-          "Dotmim.Sync.Core": "[1.1.0, )",
           "Microsoft.AspNet.WebApi.Client": "[6.0.0, )",
           "Microsoft.Extensions.Features": "[6.0.0, )",
-          "Microsoft.Net.Http.Headers": "[2.2.8, )"
+          "Microsoft.Net.Http.Headers": "[2.2.8, )",
+          "Tide.Dotmim.Sync.Core": "[1.3.0-tide.1, )"
         }
       }
     },
@@ -673,19 +673,19 @@
         "resolved": "4.5.4",
         "contentHash": "zteT+G8xuGu6mS+mzDzYXbzS7rd3K6Fjb9RiZlYlJPam2/hU7JCBZBVEcywNuR+oZ1ncTvc/cq0faRr3P01OVg=="
       },
-      "dotmim.sync.core": {
+      "Tide.Dotmim.Sync.Core": {
         "type": "Project",
         "dependencies": {
           "Microsoft.Extensions.Logging": "[6.0.0, )",
           "System.Text.Json": "[8.0.4, )"
         }
       },
-      "dotmim.sync.web.client": {
+      "Tide.Dotmim.Sync.Web.Client": {
         "type": "Project",
         "dependencies": {
-          "Dotmim.Sync.Core": "[1.1.0, )",
           "Microsoft.AspNet.WebApi.Client": "[6.0.0, )",
-          "Microsoft.Extensions.Features": "[6.0.0, )"
+          "Microsoft.Extensions.Features": "[6.0.0, )",
+          "Tide.Dotmim.Sync.Core": "[1.3.0-tide.1, )"
         }
       }
     },
@@ -802,19 +802,19 @@
         "resolved": "8.0.0",
         "contentHash": "yev/k9GHAEGx2Rg3/tU6MQh4HGBXJs70y7j1LaM1i/ER9po+6nnQ6RRqTJn1E7Xu0fbIFK80Nh5EoODxrbxwBQ=="
       },
-      "dotmim.sync.core": {
+      "Tide.Dotmim.Sync.Core": {
         "type": "Project",
         "dependencies": {
           "Microsoft.Extensions.Logging": "[8.0.0, )",
           "System.Text.Json": "[8.0.4, )"
         }
       },
-      "dotmim.sync.web.client": {
+      "Tide.Dotmim.Sync.Web.Client": {
         "type": "Project",
         "dependencies": {
-          "Dotmim.Sync.Core": "[1.1.0, )",
           "Microsoft.Extensions.Features": "[8.0.6, )",
-          "Microsoft.Net.Http.Headers": "[8.0.6, )"
+          "Microsoft.Net.Http.Headers": "[8.0.6, )",
+          "Tide.Dotmim.Sync.Core": "[1.3.0-tide.1, )"
         }
       }
     }
