@@ -613,8 +613,20 @@ namespace Dotmim.Sync.Sqlite
         /// <inheritdoc />
         public override DbCommand GetCreateScopeInfoClientErrorsTableCommand(DbConnection connection, DbTransaction transaction)
         {
-            // The CREATE + the index are two statements; we issue both in
-            // one CommandText since SqliteCommand happily accepts a script.
+            // CREATE TABLE only — no trailing CREATE INDEX. The caller
+            // (DbScopeBuilder.GetCommandAsync) invokes SqliteCommand.Prepare()
+            // before ExecuteNonQuery; SQLite's prepare compiles every statement
+            // in the script upfront, so a "CREATE TABLE T; CREATE INDEX ... ON T"
+            // pair fails with "no such table: T" because the second statement is
+            // compiled before the first executes.
+            //
+            // The primary key (sync_scope_name, table_name, table_schema,
+            // primary_key_json) already builds a leftmost index on
+            // sync_scope_name, which is the only column the runtime LOAD query
+            // filters on — so the previously-included redundant
+            // ix_{tableName}_scope index added no measurable benefit. With low
+            // row counts (errors are by definition rare) the PK index is
+            // sufficient.
             var tableName = this.ScopeInfoClientErrorsTableName;
             var commandText =
                 $@"CREATE TABLE [{tableName}](
@@ -625,8 +637,7 @@ namespace Dotmim.Sync.Sqlite
                     primary_key_json   TEXT    NOT NULL,
                     row_payload_json   TEXT    NOT NULL,
                     created_at_ticks   INTEGER NOT NULL,
-                    CONSTRAINT PKey_{tableName} PRIMARY KEY(sync_scope_name, table_name, table_schema, primary_key_json));
-                  CREATE INDEX [ix_{tableName}_scope] ON [{tableName}](sync_scope_name);";
+                    CONSTRAINT PKey_{tableName} PRIMARY KEY(sync_scope_name, table_name, table_schema, primary_key_json));";
 
             var command = connection.CreateCommand();
             command.Transaction = transaction;
