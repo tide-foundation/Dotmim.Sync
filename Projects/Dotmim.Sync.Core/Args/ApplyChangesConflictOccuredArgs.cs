@@ -57,7 +57,7 @@ namespace Dotmim.Sync
             else
             {
                 orchestrator?.Logger?.LogWarning(
-                    "[ApplyChangesConflictOccuredArgs] Reshaping conflict row for {Schema}.{Table}: source buffer has {SrcLen} values but cloned schema expects {ExpectedLen} (Columns.Count + 1). Likely schema drift between conflictRow and schemaChangesTable.",
+                    "[ApplyChangesConflictOccuredArgs] Skipping row strict-shape check for {Schema}.{Table}: detected schema drift (source buffer has {SrcLen} values but cloned schema expects {ExpectedLen} = Columns.Count + 1). Reshaping conflict row to match cloned schema.",
                     clonedSchema.SchemaName,
                     clonedSchema.TableName,
                     sourceBuffer.Length,
@@ -85,7 +85,7 @@ namespace Dotmim.Sync
                 // conflict-event side effect.
                 orchestrator?.Logger?.LogWarning(
                     ex,
-                    "[ApplyChangesConflictOccuredArgs] Could not materialize FinalRow for {Schema}.{Table}; leaving FinalRow null. Conflict resolution will still proceed with the configured policy.",
+                    "[ApplyChangesConflictOccuredArgs] Skipping row materialization for {Schema}.{Table} due to schema drift; leaving FinalRow null. Conflict resolution will still proceed with the configured policy.",
                     clonedSchema.SchemaName,
                     clonedSchema.TableName);
                 this.FinalRow = null;
