@@ -8,7 +8,7 @@
 	-->
 	<PropertyGroup>
 		<PackageId>Tide.$(MSBuildProjectName)</PackageId>
-		<Version>1.3.0-tide.1</Version>
+		<Version>1.3.0-tide.2</Version>
 		<Authors>Tide Foundation</Authors>
 		<Company>Tide Foundation</Company>
 		<RepositoryUrl>https://github.com/tide-foundation/Dotmim.Sync</RepositoryUrl>
