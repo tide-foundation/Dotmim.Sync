@@ -74,6 +74,37 @@ namespace Dotmim.Sync
                     if (!exists)
                         await this.InternalCreateScopeInfoTableAsync(context, DbScopeType.ScopeInfoClient, runner.Connection, runner.Transaction, runner.Progress, runner.CancellationToken).ConfigureAwait(false);
 
+                    // Tide fork (atomic-errors-batch): ensure the per-row,
+                    // in-DB errors-batch table exists and that any legacy
+                    // sync_scope_errors blob in scope_info_client has been
+                    // NULLed out. Previously these two operations only ran
+                    // during Provision — so on existing client databases
+                    // (every deployed node) the new table was never created
+                    // and the legacy column was never cleared. Both
+                    // operations are idempotent and cheap so it is safe to
+                    // run them on every sync. Providers that don't override
+                    // the create command (Postgres, SqlServer, etc.) return
+                    // null from the factory and InternalCreateScopeInfoTableAsync
+                    // becomes a no-op — they continue using the legacy file
+                    // path. SQLite (the client store) opts in via
+                    // SqliteScopeBuilder.GetCreateScopeInfoClientErrorsTableCommand.
+                    bool errExists;
+                    (context, errExists) = await this.InternalExistsScopeInfoTableAsync(context, DbScopeType.ScopeInfoClientErrors, runner.Connection, runner.Transaction, runner.Progress, runner.CancellationToken).ConfigureAwait(false);
+
+                    if (!errExists)
+                    {
+                        (context, _) = await this.InternalCreateScopeInfoTableAsync(context, DbScopeType.ScopeInfoClientErrors, runner.Connection, runner.Transaction, runner.Progress, runner.CancellationToken).ConfigureAwait(false);
+
+                        // Clean-break legacy migration: NULL out every legacy
+                        // sync_scope_errors blob so the old file-pointer path
+                        // is decommissioned. Orphan JSON files under
+                        // Options.BatchDirectory are left alone (harmless;
+                        // cleaned by container restart / /tmp sweep).
+                        // Internally tolerates DbException so missing
+                        // sync_scope_errors / scope_info_client is non-fatal.
+                        await this.InternalMigrateLegacyScopeErrorsAsync(context, runner.Connection, runner.Transaction, runner.Progress, runner.CancellationToken).ConfigureAwait(false);
+                    }
+
                     ScopeInfo cScopeInfo;
                     bool cScopeInfoExists;
                     (context, cScopeInfoExists) = await this.InternalExistsScopeInfoAsync(context.ScopeName, context, runner.Connection, runner.Transaction, runner.Progress, runner.CancellationToken).ConfigureAwait(false);
