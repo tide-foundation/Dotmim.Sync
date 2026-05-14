@@ -310,7 +310,55 @@ namespace Dotmim.Sync
 
                         if (isBatch)
                         {
-                            foreach (var syncRow in localSerializer.GetRowsFromFile(fullPath, schemaChangesTable))
+                            // Tide fork (errors-batch-resilience): the on-disk
+                            // batch file can be left truncated / structurally
+                            // invalid if a previous sync was killed mid-write
+                            // (e.g. k8s SIGKILL during pod eviction). If JSON
+                            // parsing / row-iteration fails we treat the file
+                            // as empty and continue — propagating
+                            // JsonReaderException from here aborts the entire
+                            // sync, which is exactly the regression we are
+                            // trying to fix. Only the narrow set of exceptions
+                            // that indicate "the JSON on disk is bad" is
+                            // swallowed; everything else (DB errors, OOM,
+                            // cancellation, etc.) is left to propagate.
+                            IEnumerable<SyncRow> batchSyncRows;
+                            try
+                            {
+                                batchSyncRows = localSerializer.GetRowsFromFile(fullPath, schemaChangesTable).ToList();
+                            }
+                            catch (JsonException jsonEx)
+                            {
+                                this.Logger.LogWarning(
+                                    jsonEx,
+                                    "[InternalApplyTableChangesAsync]. Corrupt errors batch file {Path} ({ExceptionType}: {Message}). Treating as empty and skipping.",
+                                    fullPath,
+                                    jsonEx.GetType().Name,
+                                    jsonEx.Message);
+                                batchSyncRows = Enumerable.Empty<SyncRow>();
+                            }
+                            catch (ArgumentOutOfRangeException aoorEx)
+                            {
+                                this.Logger.LogWarning(
+                                    aoorEx,
+                                    "[InternalApplyTableChangesAsync]. Corrupt errors batch file {Path} ({ExceptionType}: {Message}). Treating as empty and skipping.",
+                                    fullPath,
+                                    aoorEx.GetType().Name,
+                                    aoorEx.Message);
+                                batchSyncRows = Enumerable.Empty<SyncRow>();
+                            }
+                            catch (InvalidOperationException ioEx)
+                            {
+                                this.Logger.LogWarning(
+                                    ioEx,
+                                    "[InternalApplyTableChangesAsync]. Corrupt errors batch file {Path} ({ExceptionType}: {Message}). Treating as empty and skipping.",
+                                    fullPath,
+                                    ioEx.GetType().Name,
+                                    ioEx.Message);
+                                batchSyncRows = Enumerable.Empty<SyncRow>();
+                            }
+
+                            foreach (var syncRow in batchSyncRows)
                             {
                                 rowsFetched++;
 
@@ -418,7 +466,49 @@ namespace Dotmim.Sync
                             command.Connection = runner.Connection;
                             command.Transaction = runner.Transaction;
 
-                            foreach (var syncRow in localSerializer.GetRowsFromFile(fullPath, schemaChangesTable))
+                            // Tide fork (errors-batch-resilience): same
+                            // rationale as the isBatch path above — a
+                            // truncated / malformed batch file is treated as
+                            // empty rather than crashing the entire sync.
+                            // Each callsite owns its own try/catch so state
+                            // is isolated from the batch path.
+                            IEnumerable<SyncRow> rowwiseSyncRows;
+                            try
+                            {
+                                rowwiseSyncRows = localSerializer.GetRowsFromFile(fullPath, schemaChangesTable).ToList();
+                            }
+                            catch (JsonException jsonEx)
+                            {
+                                this.Logger.LogWarning(
+                                    jsonEx,
+                                    "[InternalApplyTableChangesAsync]. Corrupt errors batch file {Path} ({ExceptionType}: {Message}). Treating as empty and skipping.",
+                                    fullPath,
+                                    jsonEx.GetType().Name,
+                                    jsonEx.Message);
+                                rowwiseSyncRows = Enumerable.Empty<SyncRow>();
+                            }
+                            catch (ArgumentOutOfRangeException aoorEx)
+                            {
+                                this.Logger.LogWarning(
+                                    aoorEx,
+                                    "[InternalApplyTableChangesAsync]. Corrupt errors batch file {Path} ({ExceptionType}: {Message}). Treating as empty and skipping.",
+                                    fullPath,
+                                    aoorEx.GetType().Name,
+                                    aoorEx.Message);
+                                rowwiseSyncRows = Enumerable.Empty<SyncRow>();
+                            }
+                            catch (InvalidOperationException ioEx)
+                            {
+                                this.Logger.LogWarning(
+                                    ioEx,
+                                    "[InternalApplyTableChangesAsync]. Corrupt errors batch file {Path} ({ExceptionType}: {Message}). Treating as empty and skipping.",
+                                    fullPath,
+                                    ioEx.GetType().Name,
+                                    ioEx.Message);
+                                rowwiseSyncRows = Enumerable.Empty<SyncRow>();
+                            }
+
+                            foreach (var syncRow in rowwiseSyncRows)
                             {
                                 if (syncRow.RowState is SyncRowState.ApplyModifiedFailed or SyncRowState.ApplyDeletedFailed)
                                 {
